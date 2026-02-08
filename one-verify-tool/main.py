@@ -933,6 +933,13 @@ class GeminiVerifier:
         self, method: str, endpoint: str, body: Dict = None
     ) -> Tuple[Dict, int]:
         random_delay()
+        url = f"{SHEERID_API_URL}{endpoint}"
+        
+        # Verbose Logging
+        print(f"\n      🌐 Request: {method} {url}")
+        if body:
+            print(f"      📦 Body: {json.dumps(body, indent=2, ensure_ascii=False)}")
+            
         try:
             # Use anti-detect headers if available
             headers = (
@@ -941,14 +948,22 @@ class GeminiVerifier:
                 else {"Content-Type": "application/json"}
             )
             resp = self.client.request(
-                method, f"{SHEERID_API_URL}{endpoint}", json=body, headers=headers
+                method, url, json=body, headers=headers
             )
+            
             try:
                 parsed = resp.json() if resp.text else {}
             except Exception:
                 parsed = {"_text": resp.text}
+            
+            # Verbose Logging 
+            print(f"      📥 Response: {resp.status_code}")
+            if parsed:
+                print(f"      📄 Content: {json.dumps(parsed, indent=2, ensure_ascii=False)}")
+                
             return parsed, resp.status_code
         except Exception as e:
+            print(f"      ❌ Request Error: {e}")
             raise Exception(f"Request failed: {e}")
 
     def _upload_s3(self, url: str, data: bytes) -> bool:
