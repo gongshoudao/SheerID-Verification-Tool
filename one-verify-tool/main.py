@@ -326,8 +326,15 @@ UNIVERSITIES = [
 ]
 
 
-def select_university() -> Dict:
-    """Weighted random selection based on success rates"""
+def select_university(manual_name: str = None) -> Dict:
+    """Weighted random selection based on success rates or manual selection"""
+    if manual_name:
+        for uni in UNIVERSITIES:
+            if manual_name.lower() in uni["name"].lower():
+                print(f"   🎯 Manually selected school: {uni['name']}")
+                return {**uni, "idExtended": str(uni["id"])}
+        print(f"   ⚠️  Manual school '{manual_name}' not found, falling back to random.")
+
     weights = []
     for uni in UNIVERSITIES:
         weight = uni["weight"] * (stats.get_rate(uni["name"]) / 50)
@@ -854,7 +861,7 @@ class GeminiVerifier:
 
             # Generate info
             first, last = generate_name()
-            self.org = select_university()
+            self.org = select_university(kwargs.get("manual_school"))
             email = generate_email(first, last, self.org["domain"])
             dob = generate_birth_date()
 
@@ -1040,6 +1047,9 @@ def main():
     parser.add_argument(
         "--force", action="store_true", help="Force run even with warnings"
     )
+    parser.add_argument(
+        "--school", help="Manually specify school name (partial match)"
+    )
     args = parser.parse_args()
 
     print()
@@ -1097,7 +1107,7 @@ def main():
         print(f"\n   ❌ Link Error: {check.get('error')}")
         return
 
-    result = verifier.verify()
+    result = verifier.verify(manual_school=args.school)
 
     print()
     print("─" * 58)
