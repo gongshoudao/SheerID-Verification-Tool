@@ -847,7 +847,7 @@ class GeminiVerifier:
             return {"valid": False, "error": "Already pending review"}
         return {"valid": False, "error": f"Invalid step: {step}"}
 
-    def verify(self) -> Dict:
+    def verify(self, **kwargs) -> Dict:
         """Run full verification"""
         if not self.vid:
             return {"success": False, "error": "Invalid verification URL"}
