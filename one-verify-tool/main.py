@@ -329,11 +329,13 @@ UNIVERSITIES = [
 def select_university(manual_name: str = None) -> Dict:
     """Weighted random selection based on success rates or manual selection"""
     if manual_name:
+        mn = manual_name.lower()
         for uni in UNIVERSITIES:
-            if manual_name.lower() in uni["name"].lower():
+            # 同时匹配校名和域名(例如 ucla.edu)
+            if mn in uni["name"].lower() or mn in uni["domain"].lower():
                 print(f"   🎯 Manually selected school: {uni['name']}")
                 return {**uni, "idExtended": str(uni["id"])}
-        print(f"   ⚠️  Manual school '{manual_name}' not found, falling back to random.")
+        print(f"   ⚠️  Manual school '{manual_name}' not found in list, falling back to random.")
 
     weights = []
     for uni in UNIVERSITIES:
