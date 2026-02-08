@@ -540,6 +540,102 @@ def generate_birth_date() -> str:
     day = random.randint(1, 28)
     return f"{year}-{month:02d}-{day:02d}"
 
+def post_process_image(img: Image.Image) -> Image.Image:
+    """Add noise and slight rotation to make document look real"""
+    from PIL import ImageFilter, ImageEnhance
+    import numpy as np
+    
+    # 1. Slight rotation to simulate scanning/photo
+    angle = random.uniform(-0.5, 0.5)
+    img = img.rotate(angle, resample=Image.BICUBIC, expand=False, fillcolor=(255,255,255))
+    
+    # 2. Add subtle grain/noise
+    img_array = np.array(img).astype(np.float32)
+    noise = np.random.normal(0, 3, img_array.shape) # subtle noise
+    noisy_img = np.clip(img_array + noise, 0, 255).astype(np.uint8)
+    img = Image.fromarray(noisy_img)
+    
+    # 3. Subtle blur and contrast adjustment
+    img = img.filter(ImageFilter.GaussianBlur(radius=0.3))
+    enhancer = ImageEnhance.Contrast(img)
+    img = enhancer.enhance(random.uniform(0.95, 1.05))
+    
+    return img
+
+def get_fonts(sizes=[32, 24, 16], font_type="sans"):
+    """Enhanced font selection: Mac & Linux support, Serif & Sans-Serif"""
+    # 针对印章建议使用 serif (衬线体)
+    if font_type == "serif":
+        font_paths = [
+            "/System/Library/Fonts/Supplemental/Times New Roman.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSerif-Regular.ttf",
+            "/Library/Fonts/Georgia.ttf",
+            "times.ttf"
+        ]
+        bold_paths = [
+            "/System/Library/Fonts/Supplemental/Times New Roman Bold.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSerif-Bold.ttf",
+            "timesbd.ttf"
+        ]
+    else:
+        font_paths = [
+            "/System/Library/Fonts/Helvetica.ttc",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+            "/Library/Fonts/Arial.ttf",
+            "arial.ttf"
+        ]
+        bold_paths = [
+            "/System/Library/Fonts/Helvetica-Bold.ttc",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+            "arialbd.ttf"
+        ]
+    
+    res = []
+    for s in sizes:
+        f = None
+        for p in font_paths:
+            try:
+                f = ImageFont.truetype(p, s)
+                break
+            except: continue
+        res.append(f if f else ImageFont.load_default())
+        
+    f_bold = None
+    for p in bold_paths:
+        try:
+            f_bold = ImageFont.truetype(p, sizes[-1])
+            break
+        except: continue
+    res.append(f_bold if f_bold else ImageFont.load_default())
+    
+    return res # [f1, f2, f3, ..., f_bold]
+
+def draw_circular_text(draw, center, radius, text, font, color, start_angle):
+    """Helper to draw text along a circular path"""
+    from math import sin, cos, radians
+    cx, cy = center
+    # Calculate angular spacing for characters
+    # Very rough estimate of total angle based on text length
+    angle_step = 160 / max(1, len(text)) 
+    
+    for i, char in enumerate(text):
+        angle = start_angle + (i * angle_step)
+        # Position on circle
+        x = cx + radius * cos(radians(angle))
+        y = cy + radius * sin(radians(angle))
+        
+        # Create a small temp image for the character to rotate it
+        char_img = Image.new("RGBA", (int(font.size * 2), int(font.size * 2)), (0, 0, 0, 0))
+        char_draw = ImageDraw.Draw(char_img)
+        char_draw.text((font.size, font.size), char, fill=color, font=font, anchor="mm")
+        
+        # Rotation should be perpendicular to the radius
+        rotated_char = char_img.rotate(-angle - 90, expand=False, resample=Image.BICUBIC)
+        
+        # Paste onto main image
+        char_bbox = (int(x - font.size), int(y - font.size))
+        draw._image.paste(rotated_char, char_bbox, rotated_char)
+
 
 # ============ DOCUMENT GENERATOR ============
 # ============ DOCUMENT GENERATOR ============
@@ -549,13 +645,8 @@ def generate_transcript(first: str, last: str, school: str, dob: str) -> bytes:
     img = Image.new("RGB", (w, h), (255, 255, 255))
     draw = ImageDraw.Draw(img)
 
-    try:
-        font_header = ImageFont.truetype("arial.ttf", 32)
-        font_title = ImageFont.truetype("arial.ttf", 24)
-        font_text = ImageFont.truetype("arial.ttf", 16)
-        font_bold = ImageFont.truetype("arialbd.ttf", 16)
-    except:
-        font_header = font_title = font_text = font_bold = ImageFont.load_default()
+    # Try to get real fonts
+    font_header, font_title, font_text, font_sm, font_bold = get_fonts([32, 24, 16, 12])
 
     # 1. Header
     draw.text(
@@ -633,6 +724,39 @@ def generate_transcript(first: str, last: str, school: str, dob: str) -> bytes:
     draw.text((50, y), "Cumulative GPA: 3.85", font=font_bold, fill=(0, 0, 0))
     draw.text((w - 300, y), "Academic Standing: Good", font=font_bold, fill=(0, 0, 0))
 
+    # 7. ADD WATERMARK (Diagonal text)
+    watermark_text = school.upper()
+    temp_img = Image.new("RGBA", (w, h), (255, 255, 255, 0))
+    temp_draw = ImageDraw.Draw(temp_img)
+    # Draw faint diagonal text
+    for i in range(0, h, 200):
+        for j in range(-200, w, 300):
+            temp_draw.text((j, i), watermark_text, fill=(200, 200, 200, 30), font=font_text)
+    temp_img = temp_img.rotate(30, expand=False)
+    img.paste(temp_img, (0, 0), temp_img)
+
+    # 8. ADD UNIVERSITY SEAL (Registrar Style - circular text)
+    seal_color = (30, 60, 130, 200) # Deeper Navy
+    r = 75
+    cx, cy = w - 160, h - 200
+    
+    # Fonts for seal (Serif!)
+    s_f_md, s_f_sm, s_f_bold = get_fonts([14, 10, 16], "serif")[1:]
+
+    # Draw circles
+    draw.ellipse([cx-r, cy-r, cx+r, cy+r], outline=seal_color, width=2)
+    draw.ellipse([cx-r+5, cy-r+5, cx+r-5, cy+r-5], outline=seal_color, width=1)
+    
+    # Top curved text
+    draw_circular_text(draw, (cx, cy), r - 18, "OFFICE OF THE REGISTRAR", s_f_bold, seal_color, 200)
+    
+    # Bottom curved text
+    draw_circular_text(draw, (cx, cy), r - 18, f"AUTHENTICATE {time.strftime('%Y')}", s_f_sm, seal_color, 20)
+
+    # Center text
+    draw.text((cx, cy-5), "OFFICIAL", fill=seal_color, font=s_f_md, anchor="mm")
+    draw.text((cx, cy+15), "DOCUMENT", fill=seal_color, font=s_f_md, anchor="mm")
+
     # 6. Watermark / Footer
     draw.text(
         (w // 2, h - 50),
@@ -643,79 +767,84 @@ def generate_transcript(first: str, last: str, school: str, dob: str) -> bytes:
     )
 
     buf = BytesIO()
+    img = post_process_image(img)
     img.save(buf, format="PNG")
     return buf.getvalue()
 
 
 def generate_student_id(first: str, last: str, school: str) -> bytes:
-    """Generate fake student ID card (Improved)"""
+    """Generate professional looking student ID card (High Fidelity)"""
     w, h = 650, 400
-    # Randomize background color slightly
-    bg_color = (
-        random.randint(240, 255),
-        random.randint(240, 255),
-        random.randint(240, 255),
-    )
-    img = Image.new("RGB", (w, h), bg_color)
+    
+    # Base background with subtle gradient-like texture
+    img = Image.new("RGB", (w, h), (255, 255, 255))
     draw = ImageDraw.Draw(img)
+    
+    # 1. Background Pattern (Subtle blue waves/lines)
+    for i in range(0, h, 8):
+        draw.line([(0, i), (w, i + 50)], fill=(245, 248, 255), width=1)
+    
+    # get_fonts(sizes) returns len(sizes) regular fonts + 1 bold font of the last size
+    font_lg, font_md, font_sm, _, font_bold = get_fonts([28, 18, 12, 20])
 
+    # 2. Header (More sophisticated than a flat bar)
+    header_color = (25, 50, 100)
+    draw.rectangle([(0, 0), (w, 85)], fill=header_color)
+    draw.text((30, 42), school.upper(), fill=(255, 220, 100), font=font_bold, anchor="lm")
+    
+    # 3. Photo Area (No more "PHOTO" text)
+    photo_box = [(35, 110), (175, 290)]
+    draw.rectangle(photo_box, outline=(150, 150, 150), width=1, fill=(235, 235, 235))
+    
+    # Draw a stylized person silhouette instead of text
+    # Head
+    draw.ellipse([(85, 140), (125, 185)], fill=(180, 180, 180))
+    # Body/Shoulders
+    draw.chord([(60, 190), (150, 270)], start=180, end=0, fill=(180, 180, 180))
+    
+    # 4. Info Section
+    x_info = 205
+    # Name (Large and bold)
+    draw.text((x_info, 120), f"{first.upper()} {last.upper()}", fill=(0, 0, 0), font=font_lg)
+    
+    # Labels and Values (Better spacing)
+    y_start = 175
+    details = [
+        ("STUDENT ID:", str(random.randint(20000000, 29999999))),
+        ("ROLE:", "STUDENT (UNDERGRAD)"),
+        ("ISSUED:", time.strftime("%m/%d/%Y")),
+        ("VAL THROUGH:", f"05/31/{int(time.strftime('%Y')) + 2}"),
+    ]
+    
+    for label, val in details:
+        draw.text((x_info, y_start), label, fill=(120, 120, 120), font=font_sm)
+        draw.text((x_info + 110, y_start), val, fill=(0, 0, 0), font=font_md)
+        y_start += 35
+
+    # 5. Hand-written Signature Line
+    draw.line([(x_info, 330), (x_info + 200, 330)], fill=(0, 0, 0), width=1)
+    draw.text((x_info, 335), "AUTHORIZING SIGNATURE", fill=(150, 150, 150), font=font_sm)
+    # Fake signature text
     try:
-        font_lg = ImageFont.truetype("arial.ttf", 26)
-        font_md = ImageFont.truetype("arial.ttf", 18)
-        font_sm = ImageFont.truetype("arial.ttf", 14)
-        font_bold = ImageFont.truetype("arialbd.ttf", 20)
+        sig_font = ImageFont.truetype("/usr/share/fonts/truetype/liberation/LiberationSerif-Italic.ttf", 24)
     except:
-        font_lg = font_md = font_sm = font_bold = ImageFont.load_default()
+        sig_font = font_md
+    draw.text((x_info + 10, 305), f"{first} {last}", fill=(20, 40, 120), font=sig_font)
 
-    # Header color based on school name hash to be consistent but varied
-    header_color = (
-        random.randint(0, 50),
-        random.randint(0, 50),
-        random.randint(50, 150),
-    )
+    # 6. Hologram (Refined)
+    holo_pos = (550, 115)
+    for i in range(15):
+        c = (200 + i*2, 220 + i, 255 - i)
+        draw.regular_polygon((holo_pos, 35), n_sides=6, rotation=i*10, outline=c)
+    draw.text(holo_pos, "VALID", fill=(100, 100, 255, 150), font=font_sm, anchor="mm")
 
-    draw.rectangle([(0, 0), (w, 80)], fill=header_color)
-    draw.text(
-        (w // 2, 40), school.upper(), fill=(255, 255, 255), font=font_lg, anchor="mm"
-    )
+    # 7. Fine Print (Bottom)
+    draw.text((w/2, 385), "IF FOUND, PLEASE RETURN TO CAMPUS CARD SERVICES OR NEAREST POLICE STATION.", 
+              fill=(160, 160, 160), font=font_sm, anchor="mm")
 
-    # Photo placeholder
-    draw.rectangle(
-        [(30, 100), (160, 280)], outline=(100, 100, 100), width=2, fill=(220, 220, 220)
-    )
-    draw.text((95, 190), "PHOTO", fill=(150, 150, 150), font=font_md, anchor="mm")
-
-    # Info
-    x_info = 190
-    y = 110
-    draw.text((x_info, y), f"{first} {last}", fill=(0, 0, 0), font=font_bold)
-    y += 40
-    draw.text((x_info, y), "Student ID:", fill=(100, 100, 100), font=font_sm)
-    draw.text(
-        (x_info + 80, y),
-        str(random.randint(10000000, 99999999)),
-        fill=(0, 0, 0),
-        font=font_md,
-    )
-    y += 30
-    draw.text((x_info, y), "Role:", fill=(100, 100, 100), font=font_sm)
-    draw.text((x_info + 80, y), "Student", fill=(0, 0, 0), font=font_md)
-    y += 30
-    draw.text((x_info, y), "Valid Thru:", fill=(100, 100, 100), font=font_sm)
-    draw.text(
-        (x_info + 80, y),
-        f"05/{int(time.strftime('%Y')) + 1}",
-        fill=(0, 0, 0),
-        font=font_md,
-    )
-
-    # Barcode strip
-    draw.rectangle([(0, 320), (w, 380)], fill=(255, 255, 255))
-    for i in range(40):
-        x = 50 + i * 14
-        if random.random() > 0.3:
-            draw.rectangle([(x, 330), (x + 8, 370)], fill=(0, 0, 0))
-
+    # Apply Post-processing (Noise, Rotation, Blur)
+    img = post_process_image(img)
+    
     buf = BytesIO()
     img.save(buf, format="PNG")
     return buf.getvalue()
