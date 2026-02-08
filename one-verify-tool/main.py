@@ -550,10 +550,15 @@ def post_process_image(img: Image.Image) -> Image.Image:
     img = img.rotate(angle, resample=Image.BICUBIC, expand=False, fillcolor=(255,255,255))
     
     # 2. Add subtle grain/noise
-    img_array = np.array(img).astype(np.float32)
-    noise = np.random.normal(0, 3, img_array.shape) # subtle noise
-    noisy_img = np.clip(img_array + noise, 0, 255).astype(np.uint8)
-    img = Image.fromarray(noisy_img)
+    try:
+        import numpy as np
+        img_array = np.array(img).astype(np.float32)
+        noise = np.random.normal(0, 3, img_array.shape) # subtle noise
+        noisy_img = np.clip(img_array + noise, 0, 255).astype(np.uint8)
+        img = Image.fromarray(noisy_img)
+    except ImportError:
+        # Fallback if numpy is not installed: skip noise
+        pass
     
     # 3. Subtle blur and contrast adjustment
     img = img.filter(ImageFilter.GaussianBlur(radius=0.3))
@@ -646,7 +651,8 @@ def generate_transcript(first: str, last: str, school: str, dob: str) -> bytes:
     draw = ImageDraw.Draw(img)
 
     # Try to get real fonts
-    font_header, font_title, font_text, font_sm, font_bold = get_fonts([32, 24, 16, 12])
+    # 优先寻找衬线体(Serif/Times)用于正式文档
+    font_header, font_title, font_text, font_sm, font_bold = get_fonts([32, 24, 16, 12], "serif")
 
     # 1. Header
     draw.text(
@@ -736,7 +742,7 @@ def generate_transcript(first: str, last: str, school: str, dob: str) -> bytes:
     img.paste(temp_img, (0, 0), temp_img)
 
     # 8. ADD UNIVERSITY SEAL (Registrar Style - circular text)
-    seal_color = (30, 60, 130, 200) # Deeper Navy
+    seal_color = (30, 60, 130, 220) # Deeper Navy
     r = 75
     cx, cy = w - 160, h - 200
     
@@ -747,15 +753,15 @@ def generate_transcript(first: str, last: str, school: str, dob: str) -> bytes:
     draw.ellipse([cx-r, cy-r, cx+r, cy+r], outline=seal_color, width=2)
     draw.ellipse([cx-r+5, cy-r+5, cx+r-5, cy+r-5], outline=seal_color, width=1)
     
-    # Top curved text
-    draw_circular_text(draw, (cx, cy), r - 18, "OFFICE OF THE REGISTRAR", s_f_bold, seal_color, 200)
+    # Top curved text (OFFICE OF THE REGISTRAR)
+    draw_circular_text(draw, (cx, cy), r - 15, "OFFICE OF THE REGISTRAR", s_f_bold, seal_color, 195)
     
-    # Bottom curved text
-    draw_circular_text(draw, (cx, cy), r - 18, f"AUTHENTICATE {time.strftime('%Y')}", s_f_sm, seal_color, 20)
+    # Bottom curved text (AUTHENTICATED)
+    draw_circular_text(draw, (cx, cy), r - 15, f"VERIFIED {time.strftime('%Y')}", s_f_sm, seal_color, 25)
 
     # Center text
     draw.text((cx, cy-5), "OFFICIAL", fill=seal_color, font=s_f_md, anchor="mm")
-    draw.text((cx, cy+15), "DOCUMENT", fill=seal_color, font=s_f_md, anchor="mm")
+    draw.text((cx, cy+15), "TRANSCRIPT", fill=seal_color, font=s_f_md, anchor="mm")
 
     # 6. Watermark / Footer
     draw.text(
@@ -773,81 +779,119 @@ def generate_transcript(first: str, last: str, school: str, dob: str) -> bytes:
 
 
 def generate_student_id(first: str, last: str, school: str) -> bytes:
-    """Generate professional looking student ID card (High Fidelity)"""
+    """Generate high-quality direct student ID scan with real user photo"""
     w, h = 650, 400
-    
-    # Base background with subtle gradient-like texture
-    img = Image.new("RGB", (w, h), (255, 255, 255))
+    img = Image.new("RGBA", (w, h), (255, 255, 255, 255))
     draw = ImageDraw.Draw(img)
     
-    # 1. Background Pattern (Subtle blue waves/lines)
-    for i in range(0, h, 8):
-        draw.line([(0, i), (w, i + 50)], fill=(245, 248, 255), width=1)
+    # 1. Background Pattern
+    for i in range(0, h, 10):
+        draw.line([(0, i), (w, i + 30)], fill=(240, 245, 255), width=1)
     
-    # get_fonts(sizes) returns len(sizes) regular fonts + 1 bold font of the last size
     font_lg, font_md, font_sm, _, font_bold = get_fonts([28, 18, 12, 20])
-
-    # 2. Header (More sophisticated than a flat bar)
+    
+    # 2. Header
     header_color = (25, 50, 100)
-    draw.rectangle([(0, 0), (w, 85)], fill=header_color)
-    draw.text((30, 42), school.upper(), fill=(255, 220, 100), font=font_bold, anchor="lm")
+    draw.rectangle([(0, 0), (w, 80)], fill=header_color)
+    draw.text((30, 40), school.upper(), fill=(255, 220, 100), font=font_bold, anchor="lm")
     
-    # 3. Photo Area (No more "PHOTO" text)
-    photo_box = [(35, 110), (175, 290)]
-    draw.rectangle(photo_box, outline=(150, 150, 150), width=1, fill=(235, 235, 235))
-    
-    # Draw a stylized person silhouette instead of text
-    # Head
-    draw.ellipse([(85, 140), (125, 185)], fill=(180, 180, 180))
-    # Body/Shoulders
-    draw.chord([(60, 190), (150, 270)], start=180, end=0, fill=(180, 180, 180))
+    # 3. Photo Area
+    photo_box = (40, 110, 170, 275) # (x1, y1, x2, y2)
+    # Attempt to load a real photo
+    photo_pasted = False
+    try:
+        # Determine gender based on name (very simple heuristic) or random
+        # In a real tool, we might want to store this in persona
+        gender = random.choice(["male", "female"])
+        photo_dir = Path(__file__).parent / "photos" / gender
+        if photo_dir.exists():
+            photos = list(photo_dir.glob("*.png"))
+            if photos:
+                user_photo = Image.open(random.choice(photos)).convert("RGBA")
+                # Scale photo to fit box
+                box_w = photo_box[2] - photo_box[0]
+                box_h = photo_box[3] - photo_box[1]
+                user_photo.thumbnail((box_w, box_h), Image.LANCZOS)
+                # Center it in the box
+                offset_x = photo_box[0] + (box_w - user_photo.width) // 2
+                offset_y = photo_box[1] + (box_h - user_photo.height) // 2
+                img.paste(user_photo, (offset_x, offset_y), user_photo)
+                photo_pasted = True
+    except Exception as e:
+        print(f"   ⚠️  Failed to load photo: {e}")
+
+    if not photo_pasted:
+        # Fallback to silhouette if no photo available
+        draw.rectangle([photo_box[0], photo_box[1], photo_box[2], photo_box[3]], 
+                      outline=(150, 150, 150), width=1, fill=(235, 235, 235))
+        draw.ellipse([(80, 130), (130, 180)], fill=(180, 180, 180))
+        draw.chord([(60, 180), (150, 260)], start=180, end=0, fill=(180, 180, 180))
     
     # 4. Info Section
-    x_info = 205
-    # Name (Large and bold)
-    draw.text((x_info, 120), f"{first.upper()} {last.upper()}", fill=(0, 0, 0), font=font_lg)
-    
-    # Labels and Values (Better spacing)
-    y_start = 175
-    details = [
-        ("STUDENT ID:", str(random.randint(20000000, 29999999))),
-        ("ROLE:", "STUDENT (UNDERGRAD)"),
-        ("ISSUED:", time.strftime("%m/%d/%Y")),
-        ("VAL THROUGH:", f"05/31/{int(time.strftime('%Y')) + 2}"),
-    ]
-    
-    for label, val in details:
-        draw.text((x_info, y_start), label, fill=(120, 120, 120), font=font_sm)
-        draw.text((x_info + 110, y_start), val, fill=(0, 0, 0), font=font_md)
-        y_start += 35
+    x_i = 200
+    draw.text((x_i, 115), f"{first.upper()} {last.upper()}", fill=(0, 0, 0), font=font_lg)
+    y_s = 175
+    student_id = str(random.randint(20000000, 29999999))
+    for label, val in [("STUDENT ID:", student_id), 
+                       ("ROLE:", "STUDENT (UNDERGRAD)"),
+                       ("VAL THROUGH:", f"05/31/{int(time.strftime('%Y')) + 2}")]:
+        draw.text((x_i, y_s), label, fill=(120, 120, 120), font=font_sm)
+        draw.text((x_i + 110, y_s), val, fill=(0, 0, 0), font=font_md)
+        y_s += 40
 
-    # 5. Hand-written Signature Line
-    draw.line([(x_info, 330), (x_info + 200, 330)], fill=(0, 0, 0), width=1)
-    draw.text((x_info, 335), "AUTHORIZING SIGNATURE", fill=(150, 150, 150), font=font_sm)
-    # Fake signature text
-    try:
-        sig_font = ImageFont.truetype("/usr/share/fonts/truetype/liberation/LiberationSerif-Italic.ttf", 24)
-    except:
-        sig_font = font_md
-    draw.text((x_info + 10, 305), f"{first} {last}", fill=(20, 40, 120), font=sig_font)
+    # 5. Barcode (Much more common on real US IDs than a signature)
+    bar_x, bar_y = 200, 310
+    draw.rectangle([bar_x, bar_y, w-40, bar_y+40], fill=(255,255,255))
+    # Draw simple barcode pattern
+    for i in range(bar_x, w-60, 4):
+        if random.random() > 0.3:
+            w_b = random.choice([1, 2, 3])
+            draw.rectangle([i, bar_y, i+w_b, bar_y+30], fill=(0,0,0))
+    draw.text((w/2 + 80, bar_y + 35), f"*{student_id}*", fill=(50, 50, 50), font=font_sm, anchor="mm")
 
-    # 6. Hologram (Refined)
-    holo_pos = (550, 115)
-    for i in range(15):
-        c = (200 + i*2, 220 + i, 255 - i)
-        draw.regular_polygon((holo_pos, 35), n_sides=6, rotation=i*10, outline=c)
-    draw.text(holo_pos, "VALID", fill=(100, 100, 255, 150), font=font_sm, anchor="mm")
+    # 6. Security Hologram
+    h_p = (560, 120)
+    for i in range(12):
+        draw.regular_polygon((h_p, 30), n_sides=6, rotation=i*15, outline=(200, 210, 255))
+    draw.text(h_p, "VERIFIED", fill=(100, 100, 250), font=font_sm, anchor="mm")
 
-    # 7. Fine Print (Bottom)
-    draw.text((w/2, 385), "IF FOUND, PLEASE RETURN TO CAMPUS CARD SERVICES OR NEAREST POLICE STATION.", 
-              fill=(160, 160, 160), font=font_sm, anchor="mm")
-
-    # Apply Post-processing (Noise, Rotation, Blur)
+    # Post-process for realism (Noise, Slight blur)
+    img = img.convert("RGB")
     img = post_process_image(img)
     
     buf = BytesIO()
     img.save(buf, format="PNG")
     return buf.getvalue()
+
+    # Apply Post-processing for realism
+    final_img = post_process_image(final_img)
+    
+    buf = BytesIO()
+    final_img.save(buf, format="PNG")
+    return buf.getvalue()
+
+def find_coeffs(pa, pb):
+    """
+    Calculate coefficients for perspective transformation.
+    Maps pa[i] to pb[i].
+    For PIL transform, pa should be target corners, pb should be source corners.
+    """
+    try:
+        import numpy as np
+        matrix = []
+        for p1, p2 in zip(pa, pb):
+            matrix.append([p1[0], p1[1], 1, 0, 0, 0, -p2[0]*p1[0], -p2[0]*p1[1]])
+            matrix.append([0, 0, 0, p1[0], p1[1], 1, -p2[1]*p1[0], -p2[1]*p1[1]])
+        A = np.array(matrix, dtype=float)
+        B = np.array(pb).reshape(8)
+        res = np.linalg.solve(A, B)
+        return res
+    except ImportError:
+        # Fallback to identity if numpy not found
+        return [1, 0, 0, 0, 1, 0, 0, 0]
+    except Exception as e:
+        print(f"   ⚠️  Matrix solve failed: {e}")
+        return [1, 0, 0, 0, 1, 0, 0, 0]
 
 
 # ============ VERIFIER ============
